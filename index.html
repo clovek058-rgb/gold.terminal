@@ -1,682 +1,589 @@
-import { useState, useEffect, useRef } from "react";
-
-// ─── HELPERS ──────────────────────────────────────────────────────────────
-const fmt = (n, d = 0) => n != null ? n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "—";
-const fmtM = (n) => {
-  if (n == null) return "—";
-  const a = Math.abs(n);
-  if (a >= 1e6) return `${n > 0 ? "+" : ""}${(n / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `${n > 0 ? "+" : ""}${(n / 1e3).toFixed(0)}K`;
-  return String(n);
-};
-const sign = (n) => (n >= 0 ? "+" : "");
-
-// ─── MINI COMPONENTS ──────────────────────────────────────────────────────
-const Badge = ({ label, color = "gray" }) => {
-  const c = {
-    green:  "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
-    red:    "bg-red-500/20 text-red-300 border-red-500/40",
-    yellow: "bg-amber-500/20 text-amber-300 border-amber-500/40",
-    blue:   "bg-sky-500/20 text-sky-300 border-sky-500/40",
-    gray:   "bg-zinc-700/40 text-zinc-400 border-zinc-600/40",
-  }[color];
-  return <span className={`border rounded font-mono font-bold tracking-widest text-[9px] px-2 py-0.5 ${c}`}>{label}</span>;
-};
-
-const Card = ({ children, className = "", glow }) => (
-  <div className={`rounded-xl border border-zinc-800 bg-zinc-900/70 backdrop-blur p-3 ${glow ? "border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.08)]" : ""} ${className}`}>
-    {children}
-  </div>
-);
-
-const Sec = ({ children, sub }) => (
-  <div className="mb-2.5">
-    <h2 className="text-[9px] font-mono tracking-[0.25em] text-zinc-500 uppercase">{children}</h2>
-    {sub && <p className="text-[9px] text-zinc-600 mt-0.5">{sub}</p>}
-  </div>
-);
-
-const KV = ({ label, value, valueClass = "text-zinc-200", sub }) => (
-  <div className="flex items-center justify-between py-1 border-b border-zinc-800/50 last:border-0">
-    <span className="text-[10px] text-zinc-500">{label}</span>
-    <div className="text-right">
-      <span className={`text-[11px] font-mono font-bold ${valueClass}`}>{value}</span>
-      {sub && <div className="text-[8px] text-zinc-600">{sub}</div>}
-    </div>
-  </div>
-);
-
-function Sparkline({ data = [], color = "#f59e0b", height = 36 }) {
-  if (!data.length) return null;
-  const vals = data.map(d => typeof d === "object" ? (d.nc ?? 0) : d);
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const r = max - min || 1;
-  const W = 220, H = height;
-  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * W},${H - ((v - min) / r) * (H - 2) - 1}`);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height }}>
-      <defs>
-        <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`M${pts.join("L")}L${W},${H}L0,${H}Z`} fill="url(#sg)" />
-      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-      <circle cx={pts.at(-1).split(",")[0]} cy={pts.at(-1).split(",")[1]} r="2.5" fill={color} />
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>XAU/USD · Gold Terminal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#09090b;--bg1:#111113;--bg2:#18181b;--bg3:#27272a;
+  --line:#2d2d30;--line2:#3f3f46;--mute:#52525b;--dim:#71717a;--text:#e4e4e7;
+  --gold:#f5a623;--gold2:#fbbf24;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--purple:#a855f7;
+  --mono:'Space Mono',monospace;--head:'Syne',sans-serif;
+}
+html,body{background:var(--bg);min-height:100vh;color:var(--text);font-family:var(--mono)}
+button{cursor:pointer;background:none;border:none;font-family:var(--mono);color:inherit}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:var(--bg1)}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:2px}
+.topbar{position:sticky;top:0;z-index:100;background:rgba(9,9,11,.96);border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}
+.topbar-inner{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 16px}
+.spot-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.spot-label{font-size:9px;letter-spacing:.25em;color:var(--mute);text-transform:uppercase}
+.spot-price{font-family:var(--head);font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1}
+.spot-chg{font-size:11px;font-weight:700}
+.meta-row{display:flex;gap:16px;margin-top:6px;flex-wrap:wrap}
+.meta-item{font-size:9px;color:var(--mute)}
+.badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.1em;border:1px solid;text-transform:uppercase}
+.badge-green{background:rgba(34,197,94,.12);color:#4ade80;border-color:rgba(34,197,94,.3)}
+.badge-red{background:rgba(239,68,68,.12);color:#f87171;border-color:rgba(239,68,68,.3)}
+.badge-yellow{background:rgba(245,166,35,.12);color:var(--gold2);border-color:rgba(245,166,35,.3)}
+.badge-gray{background:rgba(63,63,70,.3);color:var(--dim);border-color:var(--line2)}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{opacity:.7;box-shadow:0 0 0 4px rgba(34,197,94,0)}}
+.tabs{display:flex;background:var(--bg1);border-bottom:1px solid var(--line);position:sticky;top:61px;z-index:90;overflow-x:auto}
+.tabs::-webkit-scrollbar{height:0}
+.tab-btn{padding:10px 16px;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--mute);white-space:nowrap;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.tab-btn.active{color:var(--gold);border-bottom-color:var(--gold)}
+.tab-btn:hover:not(.active){color:var(--dim)}
+.content{padding:12px;display:flex;flex-direction:column;gap:10px;flex:1}
+.card{background:var(--bg1);border:1px solid var(--line);border-radius:8px;padding:12px}
+.card-glow{border-color:rgba(245,166,35,.25);box-shadow:0 0 24px rgba(245,166,35,.06)}
+.card-gg{border-color:rgba(34,197,94,.2);box-shadow:0 0 16px rgba(34,197,94,.04)}
+.card-rg{border-color:rgba(239,68,68,.2);box-shadow:0 0 16px rgba(239,68,68,.04)}
+.sec-head{font-size:8px;letter-spacing:.2em;text-transform:uppercase;color:var(--mute);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.sec-head::after{content:'';flex:1;height:1px;background:var(--line)}
+.sec-sub{font-size:8px;color:var(--line2);margin-top:-6px;margin-bottom:10px}
+.kv{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
+.kv:last-child{border-bottom:none}
+.kv-label{font-size:9px;color:var(--dim)}
+.kv-val{font-size:10px;font-weight:700}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.stat-box{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:8px}
+.stat-label{font-size:8px;color:var(--mute);margin-bottom:3px}
+.stat-val{font-size:14px;font-weight:700}
+.stat-sub{font-size:7px;color:var(--line2);margin-top:2px}
+.trend-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:3px;font-size:9px;font-weight:700}
+.trend-bull{background:rgba(34,197,94,.12);color:#4ade80}
+.trend-bear{background:rgba(239,68,68,.12);color:#f87171}
+.trend-neut{background:rgba(245,166,35,.12);color:var(--gold2)}
+.sess-box{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:8px}
+.sess-box.active{border-color:rgba(245,166,35,.4);background:rgba(245,166,35,.04)}
+.gex-row{display:flex;align-items:center;gap:6px;padding:2px 0}
+.gex-bar-wrap{flex:1;height:10px;background:var(--bg3);border-radius:2px;overflow:hidden}
+.gex-bar-fill{height:100%;border-radius:2px}
+.macro-row{display:flex;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.macro-row:last-child{border-bottom:none}
+.cot-bar-row{margin-bottom:10px}
+.cot-bar-bg{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;display:flex}
+.lvl-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px}
+.lvl-spot{background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.2)}
+.check-item{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.check-item:last-child{border-bottom:none}
+.info-block{border-left:2px solid var(--line2);padding-left:8px;margin-bottom:10px}
+.info-block:last-child{margin-bottom:0}
+.alert{border-radius:4px;padding:8px;font-size:9px;border:1px solid;line-height:1.4}
+.alert-y{background:rgba(245,166,35,.08);color:var(--gold2);border-color:rgba(245,166,35,.2)}
+.alert-g{background:rgba(34,197,94,.08);color:#4ade80;border-color:rgba(34,197,94,.2)}
+.pillar{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:10px}
+.pillar.bull{border-color:rgba(34,197,94,.25);background:rgba(34,197,94,.04)}
+.pillar.bear{border-color:rgba(239,68,68,.2);background:rgba(239,68,68,.03)}
+.footer{padding:10px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-size:8px;color:var(--mute)}
+.center-screen{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.spin{animation:spin 1s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect}=React;
+const f=(n,d=0)=>n!=null?n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}):"—";
+const fM=n=>{if(n==null)return"—";const a=Math.abs(n);if(a>=1e6)return`${n>0?"+":""}${(n/1e6).toFixed(1)}M`;if(a>=1e3)return`${n>0?"+":""}${(n/1e3).toFixed(0)}K`;return String(n);};
+const sg=n=>n>=0?"+":"";
+const tc=t=>t==="BULLISH"?"trend-bull":t==="BEARISH"?"trend-bear":"trend-neut";
+const ti=t=>t==="BULLISH"?"▲":t==="BEARISH"?"▼":"►";
+ 
+function Chart({data=[],ema8,ema21,spot}){
+  if(!data.length)return null;
+  const mn=Math.min(...data)-5,mx=Math.max(...data)+5,r=mx-mn||1;
+  const W=300,H=60;
+  const x=i=>(i/(data.length-1))*W;
+  const y=v=>H-((v-mn)/r)*H;
+  const pts=data.map((v,i)=>`${x(i)},${y(v)}`).join("L");
+  const sY=y(spot);
+  return(
+    <svg viewBox={`0 0 ${W} ${H+8}`} style={{width:"100%",height:72}}>
+      <defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f5a623" stopOpacity=".2"/><stop offset="100%" stopColor="#f5a623" stopOpacity="0"/></linearGradient></defs>
+      <path d={`M${pts}L${W},${H}L0,${H}Z`} fill="url(#cg)"/>
+      <path d={`M${pts}`} fill="none" stroke="#f5a623" strokeWidth="1.5" strokeLinejoin="round"/>
+      {ema8&&<line x1="0" y1={y(ema8)} x2={W} y2={y(ema8)} stroke="#22c55e" strokeWidth="1" strokeDasharray="3,3" opacity=".6"/>}
+      {ema21&&<line x1="0" y1={y(ema21)} x2={W} y2={y(ema21)} stroke="#3b82f6" strokeWidth="1" strokeDasharray="3,3" opacity=".6"/>}
+      <line x1="0" y1={sY} x2={W} y2={sY} stroke="#f5a623" strokeWidth=".5" strokeDasharray="2,4" opacity=".3"/>
+      <rect x={W-50} y={sY-7} width={50} height={13} rx="2" fill="#f5a623"/>
+      <text x={W-25} y={sY+4} textAnchor="middle" fontSize="7" fill="#000" fontWeight="bold" fontFamily="monospace">{f(spot,1)}</text>
     </svg>
   );
 }
-
-function MiniPriceChart({ data = [], ema8, ema21, spot }) {
-  if (!data.length) return null;
-  const min = Math.min(...data) - 10, max = Math.max(...data) + 10;
-  const r = max - min;
-  const W = 300, H = 70;
-  const x = (i) => (i / (data.length - 1)) * W;
-  const y = (v) => H - ((v - min) / r) * H;
-  const pts = data.map((v, i) => `${x(i)},${y(v)}`).join("L");
-  const spotY = y(spot);
-  return (
-    <svg viewBox={`0 0 ${W} ${H + 10}`} className="w-full" style={{ height: 80 }}>
-      <defs>
-        <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.2" />
-          <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`M${pts}L${W},${H}L0,${H}Z`} fill="url(#pg)" />
-      <path d={`M${pts}`} fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeLinejoin="round" />
-      {ema8  && <line x1="0" y1={y(ema8)}  x2={W} y2={y(ema8)}  stroke="#34d399" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.7" />}
-      {ema21 && <line x1="0" y1={y(ema21)} x2={W} y2={y(ema21)} stroke="#60a5fa" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.7" />}
-      <line x1="0" y1={spotY} x2={W} y2={spotY} stroke="#f59e0b" strokeWidth="0.5" strokeDasharray="2,4" opacity="0.3" />
-      <rect x={W - 52} y={spotY - 7} width={52} height={12} rx="2" fill="#f59e0b" opacity="0.9" />
-      <text x={W - 26} y={spotY + 3.5} textAnchor="middle" fontSize="7" fill="#000" fontWeight="bold" fontFamily="monospace">
-        {fmt(spot, 1)}
-      </text>
-    </svg>
-  );
-}
-
-function TrendArrow({ dir }) {
-  const cfg = {
-    BULLISH: { icon: "▲", color: "text-emerald-400", bg: "bg-emerald-500/10" },
-    BEARISH: { icon: "▼", color: "text-red-400",     bg: "bg-red-500/10" },
-    NEUTRAL: { icon: "►", color: "text-amber-400",   bg: "bg-amber-500/10" },
-  }[dir] || { icon: "?", color: "text-zinc-500", bg: "bg-zinc-800" };
-  return <span className={`text-[10px] font-mono font-bold ${cfg.color} ${cfg.bg} px-1.5 py-0.5 rounded`}>{cfg.icon} {dir}</span>;
-}
-
-function GEXBar({ strike, call_gex, put_gex, net, maxAbs, spot }) {
-  const pct = Math.abs(net) / (maxAbs || 1);
-  const isCall = net > 0;
-  const isNear = Math.abs(strike - spot) <= 80;
-  return (
-    <div className={`flex items-center gap-2 py-0.5 ${isNear ? "opacity-100" : "opacity-60"}`}>
-      <span className={`text-[9px] font-mono w-14 text-right ${isNear ? "text-amber-400 font-bold" : "text-zinc-500"}`}>{fmt(strike)}</span>
-      <div className="flex-1 h-2.5 bg-zinc-800 rounded-sm overflow-hidden">
-        <div className={`h-full rounded-sm ${isCall ? "bg-emerald-500/70" : "bg-red-500/70"}`} style={{ width: `${pct * 100}%` }} />
-      </div>
-      <span className={`text-[9px] font-mono w-16 text-right ${isCall ? "text-emerald-400" : "text-red-400"}`}>{fmtM(net)}</span>
-      {isNear && <span className="text-[7px] text-amber-500">◄</span>}
+ 
+function GEXBar({strike,net,maxAbs,spot}){
+  const pct=Math.abs(net)/(maxAbs||1);
+  const isC=net>0;
+  const near=Math.abs(strike-spot)<=120;
+  return(
+    <div className="gex-row" style={{opacity:near?1:.45}}>
+      <span style={{fontSize:8,width:42,textAlign:"right",flexShrink:0,color:near?"#f5a623":"#52525b",fontWeight:near?"bold":"normal"}}>{f(strike)}</span>
+      <div className="gex-bar-wrap"><div className="gex-bar-fill" style={{width:`${pct*100}%`,background:isC?"rgba(34,197,94,.55)":"rgba(239,68,68,.55)"}}/></div>
+      <span style={{fontSize:8,width:48,textAlign:"right",flexShrink:0,color:isC?"#4ade80":"#f87171"}}>{fM(net)}</span>
+      {near&&<span style={{fontSize:7,color:"#f5a623",flexShrink:0}}>◄</span>}
     </div>
   );
 }
-
-function SessionBox({ label, data, active }) {
-  if (!data) return null;
-  const biasColor = data.bias === "BULLISH" ? "text-emerald-400" : data.bias === "BEARISH" ? "text-red-400" : "text-amber-400";
-  return (
-    <div className={`rounded-lg p-2 border ${active ? "border-amber-500/50 bg-amber-500/5" : "border-zinc-800 bg-zinc-800/30"}`}>
-      <div className="flex justify-between items-center mb-1">
-        <span className={`text-[9px] font-mono font-bold ${active ? "text-amber-400" : "text-zinc-500"}`}>{label}</span>
-        {active && <span className="text-[7px] bg-amber-500/20 text-amber-400 px-1 rounded font-mono">LIVE</span>}
+ 
+function SessBox({label,data,active}){
+  if(!data)return null;
+  const bc=data.bias==="BULLISH"?"#4ade80":data.bias==="BEARISH"?"#f87171":"#f5a623";
+  return(
+    <div className={`sess-box${active?" active":""}`}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+        <span style={{fontSize:8,fontWeight:"bold",letterSpacing:".1em",textTransform:"uppercase",color:active?"#f5a623":"#71717a"}}>{label}</span>
+        {active&&<span style={{fontSize:7,background:"rgba(245,166,35,.2)",color:"#f5a623",padding:"1px 5px",borderRadius:2}}>LIVE</span>}
       </div>
-      <div className="text-[9px] text-zinc-400 font-mono">{fmt(data.low, 1)} – {fmt(data.high, 1)}</div>
-      <div className="text-[8px] text-zinc-600">Range: {fmt(data.range, 1)}</div>
-      <div className={`text-[8px] font-bold mt-0.5 ${biasColor}`}>{data.bias}</div>
+      <div style={{fontSize:9,color:"#a1a1aa"}}>{f(data.low,1)} – {f(data.high,1)}</div>
+      <div style={{fontSize:7,color:"#3f3f46",marginTop:1}}>Range {f(data.range,1)}</div>
+      <div style={{fontSize:8,fontWeight:"bold",marginTop:3,color:bc}}>{data.bias}</div>
     </div>
   );
 }
-
-function RSIGauge({ value = 50, label }) {
-  const pct = value / 100;
-  const color = value > 70 ? "#f87171" : value < 30 ? "#34d399" : "#f59e0b";
-  return (
-    <div className="text-center">
-      <div className="relative w-10 h-5 mx-auto mb-0.5">
-        <svg viewBox="0 0 40 20" className="w-full h-full">
-          <path d="M4,18 A16,16 0 0,1 36,18" fill="none" stroke="#27272a" strokeWidth="3" strokeLinecap="round" />
-          <path d="M4,18 A16,16 0 0,1 36,18" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round"
-            strokeDasharray={`${pct * 50.3} 50.3`} />
-          <text x="20" y="18" textAnchor="middle" fontSize="7" fill={color} fontFamily="monospace" fontWeight="bold">{Math.round(value)}</text>
-        </svg>
+ 
+function COTBar({label,long,short,sub}){
+  const tot=(long||0)+(short||0)||1;
+  const lP=((long||0)/tot)*100;
+  const sP=((short||0)/tot)*100;
+  const net=(long||0)-(short||0);
+  return(
+    <div className="cot-bar-row">
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,marginBottom:3}}>
+        <span style={{color:"#71717a"}}>{label} <span style={{color:"#3f3f46",fontSize:7}}>{sub}</span></span>
+        <span style={{color:net>0?"#4ade80":"#f87171",fontWeight:"bold"}}>{net>0?"+":""}{fM(net)}</span>
       </div>
-      <div className="text-[8px] text-zinc-600">{label}</div>
+      <div className="cot-bar-bg">
+        <div style={{width:`${lP}%`,height:"100%",background:"rgba(34,197,94,.6)",borderRadius:"3px 0 0 3px"}}/>
+        <div style={{width:`${sP}%`,height:"100%",background:"rgba(239,68,68,.6)",borderRadius:"0 3px 3px 0"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:7,marginTop:2}}>
+        <span style={{color:"rgba(34,197,94,.6)"}}>L {fM(long)}</span>
+        <span style={{color:"rgba(239,68,68,.6)"}}>S {fM(short)}</span>
+      </div>
     </div>
   );
 }
-
-const TABS = ["Overview", "GEX", "Trend", "COT", "Macro", "Risk"];
-
-// ─── MAIN ─────────────────────────────────────────────────────────────────
-export default function GoldTerminal() {
-  const [d, setD] = useState(null);
-  const [tab, setTab] = useState("Overview");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [lastUpdate, setLastUpdate] = useState(null);
-
-  const fetchData = async () => {
-    try {
-      const res = await fetch("http://localhost:5000/api/data");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setD(json);
-      setLastUpdate(new Date());
-      setError(null);
-      setLoading(false);
-    } catch (e) {
-      setError("Nelze se připojit k backendu — běží server.py?");
-      setLoading(false);
-    }
+ 
+const TABS=["Dashboard","Overview","GEX","Trend","COT","Macro","Risk"];
+ 
+const MACRO_CFG=[
+  {key:"real_yield",label:"Real Yield 10Y",unit:"%",inv:true,
+   desc:"10letý reálný výnos US dluhopisů (TIPS). Korelace s goldem −0.82 — nejsilnější makro driver.",
+   bull:"Klesající výnosy → dluhopisy méně atraktivní → kapitál do goldu.",
+   bear:"Rostoucí výnosy → dluhopisy konkurují goldu → prodejní tlak."},
+  {key:"dxy",label:"DXY · Dollar Index",unit:"",inv:true,
+   desc:"Síla USD vůči košíku 6 měn. Gold je kótován v USD → negativní korelace −0.78.",
+   bull:"Slabší dolar → gold zdražuje v jiných měnách → vyšší globální poptávka.",
+   bear:"Silnější dolar → gold dražší pro zahraniční kupce → bearish tlak."},
+  {key:"vix",label:"VIX · Fear Index",unit:"",inv:false,
+   desc:"Implikovaná volatilita S&P 500. Gold jako safe-haven reaguje na risk-off prostředí.",
+   bull:"VIX > 20 a roste → risk-off → útěk do safe-haven (gold, yen, dluhopisy).",
+   bear:"VIX nízký, klesá → risk-on → rotace z goldu do akcií a riskier assets."},
+  {key:"spx",label:"S&P 500",unit:"",inv:false,
+   desc:"Hlavní US index. Vztah s goldem kontextový — záleží zda je pokles risk-off nebo rotace.",
+   bull:"SPX prudce klesá → panic → gold jako hedge a safe-haven.",
+   bear:"SPX stoupá v risk-on prostředí → rotace z goldu do akcií."},
+  {key:"oil",label:"Oil WTI",unit:"$",inv:false,
+   desc:"Ropa jako inflační proxy. Vyšší ropa → vyšší inflační očekávání → gold jako hedge.",
+   bull:"Rostoucí ropa → inflační obavy → poptávka po inflačních hedgích.",
+   bear:"Klesající ropa → dezinflace → méně důvod držet gold jako inflační hedge."},
+  {key:"btc",label:"Bitcoin",unit:"$",inv:false,
+   desc:"Risk-on aktivum a alternativní store-of-value. Korelace nestabilní, situačně závislá.",
+   bull:"BTC + gold stoupají souběžně → institucí poptávka po real/hard assets.",
+   bear:"BTC klesá v risk-off → forced selling může táhnout gold dolů krátkodobě."},
+];
+ 
+function GoldTerminal(){
+  const [d,setD]=useState(null);
+  const [tab,setTab]=useState("Dashboard");
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(null);
+  const [lastUp,setLastUp]=useState(null);
+ 
+  const fetch_=async()=>{
+    try{
+      const res=await fetch("https://gold-terminal.onrender.com/api/data");
+      if(!res.ok)throw new Error();
+      const j=await res.json();
+      setD(j);setLastUp(new Date());setError(null);setLoading(false);
+    }catch{setError("Backend nedostupný — běží server.py?");setLoading(false);}
   };
-
-  useEffect(() => {
-    fetchData();
-    const id = setInterval(fetchData, 15000); // refresh každých 15s
-    return () => clearInterval(id);
-  }, []);
-
-  if (loading) return (
-    <div style={{ background: "#080809", minHeight: "100vh", fontFamily: "monospace" }}
-      className="flex items-center justify-center text-amber-400 text-sm">
-      <div className="text-center">
-        <div className="text-2xl mb-2 animate-pulse">⟳</div>
-        <div>Připojuji se k backendu...</div>
-        <div className="text-zinc-600 text-xs mt-1">http://localhost:5000</div>
-      </div>
-    </div>
-  );
-
-  if (error) return (
-    <div style={{ background: "#080809", minHeight: "100vh", fontFamily: "monospace" }}
-      className="flex items-center justify-center text-red-400 text-sm p-8">
-      <div className="text-center">
-        <div className="text-2xl mb-2">⚠</div>
-        <div>{error}</div>
-        <div className="text-zinc-600 text-xs mt-2">Spusť: python server.py</div>
-        <button onClick={fetchData} className="mt-4 px-4 py-2 bg-zinc-800 text-zinc-300 rounded text-xs">
-          Zkusit znovu
-        </button>
-      </div>
-    </div>
-  );
-
-  // ── Mapování dat z backendu ──────────────────────────────────────────────
-  const spot        = d.spot ?? 0;
-  const spotChange  = d.spot_change ?? 0;
-  const spotChangePct = d.spot_change_pct ?? 0;
-  const isPos       = spotChange >= 0;
-  const tech        = d.technicals ?? {};
-  const trend       = d.trend ?? {};
-  const gex         = d.gex ?? {};
-  const cot         = d.cot ?? {};
-  const macro       = d.macro ?? {};
-  const sessions    = d.sessions ?? {};
-  const risk        = d.risk ?? {};
-  const seasonal    = d.seasonal ?? [];
-  const keyLevels   = d.key_levels ?? [];
-  const priceHistory = d.price_history ?? [];
-  const currentMonth = d.current_month ?? new Date().getMonth() + 1;
-
-  const gexPos  = gex.regime === "POSITIVE";
-  const cotBull = (cot.noncomm_long ?? 0) > (cot.noncomm_short ?? 0);
-  const macroBull = (macro.dxy?.change ?? 0) < 0 && (macro.real_yield?.change ?? 0) < 0;
-  const currSeas = seasonal[currentMonth - 1] ?? {};
-  const seasBull = (currSeas.avg ?? 0) > 0;
-
-  const bullCount = [
-    gexPos, cotBull, macroBull, seasBull,
-    trend.daily === "BULLISH",
-    trend.intraday === "BULLISH"
-  ].filter(Boolean).length;
-  const overallBias  = bullCount >= 4 ? "BULLISH" : bullCount >= 3 ? "NEUTRAL" : "BEARISH";
-  const biasColor    = overallBias === "BULLISH" ? "green" : overallBias === "NEUTRAL" ? "yellow" : "red";
-
-  const maxGex = gex.top10?.length
-    ? Math.max(...gex.top10.map(x => Math.abs(x.net ?? 0)))
-    : 1;
-
-  const elapsed = lastUpdate ? Math.floor((new Date() - lastUpdate) / 1000) : 0;
-  const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m`;
-
-  return (
-    <div style={{ fontFamily: "'IBM Plex Mono', 'Courier New', monospace", background: "#080809", minHeight: "100vh" }}
-      className="text-zinc-100 select-none">
-
-      {/* TOP BAR */}
-      <div className="sticky top-0 z-50 border-b border-zinc-800/80 bg-zinc-950/95 backdrop-blur px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-[9px] tracking-[0.3em] text-amber-500/80 uppercase font-mono">XAU/USD</span>
-            <span className={`text-xl font-bold tracking-tight ${isPos ? "text-amber-400" : "text-red-400"}`}>
-              ${fmt(spot, 2)}
-            </span>
-            <span className={`text-[11px] font-mono ${isPos ? "text-emerald-400" : "text-red-400"}`}>
-              {sign(spotChange)}{fmt(spotChange, 2)} ({sign(spotChangePct)}{fmt(spotChangePct, 2)}%)
-            </span>
+  useEffect(()=>{fetch_();const id=setInterval(fetch_,15000);return()=>clearInterval(id);},[]);
+ 
+  if(loading)return<div className="center-screen" style={{background:"#09090b"}}><div style={{textAlign:"center",color:"#f5a623"}}><span className="spin" style={{fontSize:22,display:"block",marginBottom:8}}>⟳</span><div style={{fontSize:11}}>Připojuji se...</div><div style={{fontSize:9,color:"#3f3f46",marginTop:4}}>gold-terminal.onrender.com</div></div></div>;
+  if(error)return<div className="center-screen" style={{background:"#09090b"}}><div style={{textAlign:"center",color:"#f87171"}}><div style={{fontSize:20,marginBottom:8}}>⚠</div><div style={{fontSize:11}}>{error}</div><button onClick={fetch_} style={{marginTop:16,padding:"8px 16px",background:"#27272a",color:"#e4e4e7",borderRadius:4,fontSize:10,cursor:"pointer"}}>Zkusit znovu</button></div></div>;
+ 
+  const spot=d.spot??0,sChg=d.spot_change??0,sChgP=d.spot_change_pct??0,isPos=sChg>=0;
+  const tech=d.technicals??{},trend=d.trend??{},gex=d.gex??{},cot=d.cot??{};
+  const macro=d.macro??{},sess=d.sessions??{},risk=d.risk??{};
+  const seasonal=d.seasonal??[],kl=d.key_levels??[],ph=d.price_history??[];
+  const curM=d.current_month??new Date().getMonth()+1,cS=seasonal[curM-1]??{};
+ 
+  const gexPos=gex.regime==="POSITIVE";
+  const cotBull=(cot.noncomm_long??0)>(cot.noncomm_short??0);
+  const macroBull=(macro.dxy?.change??0)<0&&(macro.real_yield?.change??0)<0;
+  const seasBull=(cS.avg??0)>0;
+  const pillars=[
+    {name:"GEX",     bull:gexPos,                   val:gexPos?"POSITIVE":gex.regime??"—"},
+    {name:"COT",     bull:cotBull,                  val:cotBull?"BULLISH":"BEARISH"},
+    {name:"Macro",   bull:macroBull,                val:macroBull?"BULLISH":"BEARISH"},
+    {name:"Seasonal",bull:seasBull,                 val:seasBull?"BULLISH":"BEARISH"},
+    {name:"Daily",   bull:trend.daily==="BULLISH",  val:trend.daily??"—"},
+    {name:"Intraday",bull:trend.intraday==="BULLISH",val:trend.intraday??"—"},
+  ];
+  const bCnt=pillars.filter(p=>p.bull).length;
+  const bias=bCnt>=4?"BULLISH":bCnt>=3?"NEUTRAL":"BEARISH";
+  const bCls=bias==="BULLISH"?"badge-green":bias==="BEARISH"?"badge-red":"badge-yellow";
+  const bColor=bias==="BULLISH"?"#4ade80":bias==="BEARISH"?"#f87171":"#f5a623";
+  const maxGex=gex.top10?.length?Math.max(...gex.top10.map(x=>Math.abs(x.net??0))):1;
+  const elapsed=lastUp?Math.floor((new Date()-lastUp)/1000):0;
+  const elStr=elapsed<60?`${elapsed}s`:`${Math.floor(elapsed/60)}m`;
+ 
+  return(
+    <div style={{display:"flex",flexDirection:"column",minHeight:"100vh",background:"#09090b"}}>
+ 
+      {/* TOPBAR */}
+      <div className="topbar">
+        <div className="topbar-inner">
+          <div>
+            <div className="spot-row">
+              <span className="spot-label">XAU / USD</span>
+              <span className="spot-price" style={{color:isPos?"#f5a623":"#ef4444"}}>${f(spot,2)}</span>
+              <span className="spot-chg" style={{color:isPos?"#4ade80":"#f87171"}}>{sg(sChg)}{f(sChg,2)} ({sg(sChgP)}{f(sChgP,2)}%)</span>
+            </div>
+            <div className="meta-row">
+              {[["H",f(d.high_24h,1),"#4ade80"],["L",f(d.low_24h,1),"#f87171"],["VWAP",f(d.vwap,1),"#60a5fa"],["ATR",f(tech.atr14,1),"#c084fc"],["vs VWAP",`${sg(tech.price_vs_vwap??0)}${f(tech.price_vs_vwap,1)}`,(tech.price_vs_vwap??0)>=0?"#4ade80":"#f87171"],["Prev",f(d.prev_close,1),"#52525b"]].map(([k,v,c])=>(
+                <span key={k} className="meta-item">{k}: <span style={{color:c,fontWeight:"bold"}}>{v}</span></span>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge label={overallBias} color={biasColor} />
-            <span className="text-[8px] text-zinc-600 font-mono">{elapsedStr} · LIVE</span>
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span className={`badge ${bCls}`}>{bias}</span>
+              <div className="live-dot"/>
+            </div>
+            <span style={{fontSize:8,color:"#3f3f46"}}>{elStr} ago</span>
           </div>
         </div>
-        <div className="flex gap-4 mt-1.5 text-[9px] font-mono text-zinc-500">
-          {[
-            ["H", fmt(d.high_24h, 1), "text-emerald-400"],
-            ["L", fmt(d.low_24h, 1), "text-red-400"],
-            ["VWAP", fmt(d.vwap, 1), "text-sky-400"],
-            ["ATR", fmt(tech.atr14, 1), "text-purple-400"],
-            ["vs VWAP", `${sign(tech.price_vs_vwap)}${fmt(tech.price_vs_vwap, 1)}`,
-              (tech.price_vs_vwap ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"],
-          ].map(([k, v, c]) => (
-            <span key={k}>{k}: <span className={`${c} font-bold`}>{v}</span></span>
-          ))}
-        </div>
       </div>
-
+ 
       {/* TABS */}
-      <div className="flex border-b border-zinc-800/60 bg-zinc-950/80 sticky top-[72px] z-40">
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-2 text-[9px] font-mono tracking-widest uppercase transition-all ${
-              tab === t ? "text-amber-400 border-b-2 border-amber-500 bg-amber-500/5" : "text-zinc-600 hover:text-zinc-400"
-            }`}>
-            {t}
-          </button>
-        ))}
+      <div className="tabs">
+        {TABS.map(t=><button key={t} className={`tab-btn${tab===t?" active":""}`} onClick={()=>setTab(t)}>{t}</button>)}
       </div>
-
-      <div className="p-3 space-y-3">
-
-        {/* ══ OVERVIEW ══ */}
-        {tab === "Overview" && (
-          <>
-            <Card glow>
-              <Sec>── Overall Bias Score</Sec>
-              <div className="flex items-center gap-3 mb-3">
-                <div className={`text-4xl font-bold ${overallBias === "BULLISH" ? "text-emerald-400" : overallBias === "NEUTRAL" ? "text-amber-400" : "text-red-400"}`}>
-                  {bullCount}/6
-                </div>
-                <div>
-                  <Badge label={overallBias} color={biasColor} />
-                  <div className="text-[9px] text-zinc-500 mt-1">pilířů bullish</div>
-                </div>
+ 
+      <div className="content">
+ 
+        {/* ── DASHBOARD ── */}
+        {tab==="Dashboard"&&<>
+          <div className={`card ${bias==="BULLISH"?"card-gg":bias==="BEARISH"?"card-rg":"card-glow"}`}>
+            <div className="sec-head">Overall Bias</div>
+            <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:12}}>
+              <span style={{fontFamily:"var(--head)",fontSize:42,fontWeight:800,color:bColor,lineHeight:1}}>{bCnt}/6</span>
+              <div>
+                <span className={`badge ${bCls}`}>{bias}</span>
+                <div style={{fontSize:8,color:"#52525b",marginTop:4}}>signálů bullish ze 6</div>
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  ["GEX",       gexPos,                    gexPos ? "POSITIVE" : gex.regime],
-                  ["COT",       cotBull,                   cotBull ? "BULLISH" : "BEARISH"],
-                  ["Macro",     macroBull,                 macroBull ? "BULLISH" : "BEARISH"],
-                  ["Seasonal",  seasBull,                  seasBull ? "BULLISH" : "BEARISH"],
-                  ["Daily",     trend.daily === "BULLISH", trend.daily ?? "—"],
-                  ["Intraday",  trend.intraday === "BULLISH", trend.intraday ?? "—"],
-                ].map(([label, bull, val]) => (
-                  <div key={label} className={`rounded-lg p-2 border ${bull ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"}`}>
-                    <div className="text-[8px] text-zinc-500 mb-0.5">{label}</div>
-                    <div className={`text-[9px] font-bold font-mono ${bull ? "text-emerald-400" : "text-red-400"}`}>{val}</div>
-                  </div>
+            </div>
+            <div className="g3">
+              {pillars.map(p=>(
+                <div key={p.name} className={`pillar${p.bull?" bull":" bear"}`}>
+                  <div style={{fontSize:8,color:"#52525b",letterSpacing:".1em",textTransform:"uppercase",marginBottom:4}}>{p.name}</div>
+                  <div style={{fontSize:10,fontWeight:"bold",color:p.bull?"#4ade80":"#f87171"}}>{p.val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+ 
+          <div className="g2">
+            <div className="card">
+              <div className="sec-head">Technicals</div>
+              {[["Spot",`$${f(spot,2)}`,"#f5a623"],["EMA 8",`$${f(tech.ema8,1)}`,spot>=(tech.ema8??0)?"#4ade80":"#f87171"],["EMA 21",`$${f(tech.ema21,1)}`,spot>=(tech.ema21??0)?"#4ade80":"#f87171"],["EMA 50",`$${f(tech.ema50,1)}`,spot>=(tech.ema50??0)?"#4ade80":"#f87171"],["EMA 200",`$${f(tech.ema200,1)}`,spot>=(tech.ema200??0)?"#4ade80":"#f87171"],["ATR(14)",`$${f(tech.atr14,1)}`,"#c084fc"],["VWAP",`$${f(d.vwap,1)}`,spot>=(d.vwap??0)?"#4ade80":"#f87171"]].map(([k,v,c])=>(
+                <div key={k} className="kv"><span className="kv-label">{k}</span><span className="kv-val" style={{color:c}}>{v}</span></div>
+              ))}
+            </div>
+            <div className="card">
+              <div className="sec-head">Klíčové úrovně</div>
+              {kl.map((l,i)=>{const d2=l.price-spot,isS=l.type==="SPOT";return(
+                <div key={i} className={`lvl-row${isS?" lvl-spot":""}`}>
+                  <span style={{fontSize:8,fontWeight:"bold",width:28,flexShrink:0,color:l.type==="R"?"#f87171":l.type==="S"?"#4ade80":l.type==="SPOT"?"#f5a623":"#60a5fa"}}>{l.type}</span>
+                  <span style={{fontSize:10,fontWeight:"bold",flex:1,color:isS?"#f5a623":"#e4e4e7"}}>${f(l.price,1)}</span>
+                  <span style={{fontSize:8,color:"#52525b"}}>{l.label}</span>
+                  {!isS&&<span style={{fontSize:8,fontWeight:"bold",textAlign:"right",minWidth:40,color:d2>0?"#f87171":"#4ade80"}}>{sg(d2)}{f(d2,1)}</span>}
+                </div>
+              );})}
+            </div>
+          </div>
+ 
+          <div className="card">
+            <div className="sec-head">Sessions</div>
+            <div className="g3">
+              <SessBox label="ASIAN"    data={sess.asian}  active={sess.current==="ASIAN"}/>
+              <SessBox label="LONDON"   data={sess.london} active={sess.current==="LONDON"}/>
+              <SessBox label="NEW YORK" data={sess.ny}     active={sess.current==="NY"}/>
+            </div>
+            {sess.killzone_active&&<div className="alert alert-y" style={{marginTop:8}}>⚡ Killzone Active — London 07–10 / NY 13–16 UTC</div>}
+          </div>
+ 
+          <div className="card">
+            <div className="sec-head">Macro Snapshot</div>
+            <div className="g3">
+              {MACRO_CFG.map(item=>{const val=macro[item.key];if(!val)return null;const bull=item.inv?val.change<0:val.change>0;return(
+                <div key={item.key} className="stat-box">
+                  <div className="stat-label">{item.label.split("·")[0].trim()}</div>
+                  <div className="stat-val" style={{color:"#e4e4e7",fontSize:13}}>{item.unit}{f(val.value,item.unit==="%"?2:val.value>1000?0:2)}</div>
+                  <div className="stat-sub" style={{color:bull?"#4ade80":"#f87171"}}>{val.change>=0?"▲":"▼"} {Math.abs(val.change).toFixed(2)}</div>
+                </div>
+              );})}
+            </div>
+          </div>
+ 
+          <div className="card card-glow">
+            <div className="sec-head">Risk · ATR={f(risk.atr_daily,1)}</div>
+            <div className="g2">
+              {[["SL doporučený",`$${f(risk.suggested_sl,1)}`,"0.5× ATR","#f87171"],["TP1 (1:1)",`$${f(risk.suggested_tp1,1)}`,"1× ATR","#4ade80"],["TP2 (1:2)",`$${f(risk.suggested_tp2,1)}`,"2× ATR","#4ade80"],["Lot ($150 SL)",`${risk.lot_for_150} lot`,"Equity Edge","#f5a623"]].map(([k,v,s,c])=>(
+                <div key={k} className="stat-box"><div className="stat-label">{k}</div><div className="stat-val" style={{color:c,fontSize:17}}>{v}</div><div className="stat-sub">{s}</div></div>
+              ))}
+            </div>
+          </div>
+        </>}
+ 
+        {/* ── OVERVIEW ── */}
+        {tab==="Overview"&&<>
+          <div className="card">
+            <div className="sec-head">Price Chart · 30 denních svíček</div>
+            <Chart data={ph} ema8={tech.ema8} ema21={tech.ema21} spot={spot}/>
+            <div style={{display:"flex",gap:14,marginTop:6,fontSize:8}}>
+              <span style={{color:"#22c55e"}}>── EMA8 {f(tech.ema8,1)}</span>
+              <span style={{color:"#3b82f6"}}>── EMA21 {f(tech.ema21,1)}</span>
+              <span style={{color:"#52525b"}}>── EMA50 {f(tech.ema50,1)}</span>
+            </div>
+          </div>
+          <div className="card">
+            <div className="sec-head">Klíčové úrovně</div>
+            {kl.map((l,i)=>{const d2=l.price-spot,isS=l.type==="SPOT";return(
+              <div key={i} className={`lvl-row${isS?" lvl-spot":""}`}>
+                <span style={{fontSize:8,fontWeight:"bold",width:28,flexShrink:0,color:l.type==="R"?"#f87171":l.type==="S"?"#4ade80":l.type==="SPOT"?"#f5a623":"#60a5fa"}}>{l.type}</span>
+                <span style={{fontSize:10,fontWeight:"bold",flex:1,color:isS?"#f5a623":"#e4e4e7"}}>${f(l.price,1)}</span>
+                <span style={{fontSize:8,color:"#52525b"}}>{l.label}</span>
+                {!isS&&<span style={{fontSize:8,fontWeight:"bold",textAlign:"right",minWidth:40,color:d2>0?"#f87171":"#4ade80"}}>{sg(d2)}{f(d2,1)}</span>}
+              </div>
+            );})}
+          </div>
+          <div className="card">
+            <div className="sec-head">Sessions</div>
+            <div className="sec-sub">Current: {sess.current??""} · KZ: {sess.killzone_active?"ACTIVE ⚡":"inactive"}</div>
+            <div className="g3">
+              <SessBox label="ASIAN"    data={sess.asian}  active={sess.current==="ASIAN"}/>
+              <SessBox label="LONDON"   data={sess.london} active={sess.current==="LONDON"}/>
+              <SessBox label="NEW YORK" data={sess.ny}     active={sess.current==="NY"}/>
+            </div>
+            {sess.killzone_active&&<div className="alert alert-y" style={{marginTop:8}}>⚡ Killzone Active — zvýšená pravděpodobnost M5 setupů</div>}
+          </div>
+        </>}
+ 
+        {/* ── GEX ── */}
+        {tab==="GEX"&&<>
+          <div className={`card ${gexPos?"card-gg":"card-glow"}`}>
+            <div className="sec-head">Gamma Exposure · GLD Options proxy</div>
+            <div className="sec-sub">4 nejbližší expirace · přepočítáno na XAU scale</div>
+            {gex.regime==="UNKNOWN"?(
+              <div className="alert alert-y" style={{marginBottom:10}}>
+                ⚠ Options data nedostupná (víkend / yfinance limit). Načtou se v pondělí ráno.
+                <div style={{marginTop:4,color:"#52525b"}}>Fallback: Call Wall ${f(gex.call_wall)} · Put Wall ${f(gex.put_wall)}</div>
+              </div>
+            ):(
+              <div className="g3" style={{marginBottom:12}}>
+                {[["Call Wall",f(gex.call_wall),"#4ade80"],["Put Wall",f(gex.put_wall),"#f87171"],["Gamma Flip",f(gex.gamma_flip),"#f5a623"],["HVL",f(gex.hvl),"#60a5fa"],["Max Pain",f(gex.max_pain),"#c084fc"],["Net GEX",fM(gex.net_gex),gexPos?"#4ade80":"#f87171"]].map(([k,v,c])=>(
+                  <div key={k} className="stat-box"><div className="stat-label">{k}</div><div className="stat-val" style={{color:c,fontSize:13}}>{v}</div></div>
                 ))}
               </div>
-            </Card>
-
-            <Card>
-              <Sec sub={`Current: ${sessions.current ?? "—"} · KZ: ${sessions.killzone_active ? "ACTIVE ⚡" : "inactive"}`}>
-                ── Sessions & Killzones
-              </Sec>
-              <div className="grid grid-cols-3 gap-2">
-                <SessionBox label="ASIAN"    data={sessions.asian}  active={sessions.current === "ASIAN"} />
-                <SessionBox label="LONDON"   data={sessions.london} active={sessions.current === "LONDON"} />
-                <SessionBox label="NEW YORK" data={sessions.ny}     active={sessions.current === "NY"} />
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:2}}>
+              {(gex.top10??[]).sort((a,b)=>b.strike-a.strike).map((item,i)=><GEXBar key={i} {...item} maxAbs={maxGex} spot={spot}/>)}
+            </div>
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #27272a",fontSize:9,color:"#71717a"}}>
+              Expected Move: <span style={{color:"#e4e4e7"}}>${f(gex.expected_move_low)} – ${f(gex.expected_move_high)}</span>
+            </div>
+            <div className={`alert ${gexPos?"alert-g":"alert-y"}`} style={{marginTop:8}}>
+              {gexPos?"► POSITIVE GAMMA: MM buy dips & sell rallies → mean reversion favored":"► Gamma regime nejistý — sleduj cenu vs. Gamma Flip level"}
+            </div>
+          </div>
+          <div className="card">
+            <div className="sec-head">Jak číst GEX levely</div>
+            {[
+              ["Call Wall "+f(gex.call_wall),"#4ade80","Kde jsou soustředěny call opce. Market makeři jsou short gamma → jak cena stoupá, MM prodávají futures pro hedge. Silná resistance — čekej odraz nebo zpomalení pohybu.","Prakticky: neobchoduj long breakout přes Call Wall bez silného momentu."],
+              ["Put Wall "+f(gex.put_wall),"#f87171","Concentration put opcí. MM jsou long gamma → jak cena klesá, MM nakupují futures. Přirozená podlaha trhu, tlumí pády.","Prakticky: hledej long reversal setu up u Put Wall úrovně."],
+              ["Gamma Flip "+f(gex.gamma_flip),"#f5a623","Nejkritičtější level. NAD flipem: MM long gamma → mean reversion, trh tlumí výkyvy. POD flipem: MM short gamma → trendy pohyby, volatilita akceleruje.","Prakticky: nad flipem preferuj mean reversion, pod flipem momentum strategie."],
+              ["HVL "+f(gex.hvl),"#60a5fa","High Volume Level — gravitační střed mezi call a put wall. Cena k tomuto levelu gravituje, zejména před expirací.","Prakticky: očekávej konsolidaci kolem HVL levelu."],
+            ].map(([t,c,desc,tip])=>(
+              <div key={t} className="info-block" style={{borderLeftColor:c}}>
+                <div style={{fontSize:9,fontWeight:"bold",color:c,marginBottom:3}}>{t}</div>
+                <div style={{fontSize:8,color:"#71717a",lineHeight:1.5}}>{desc}</div>
+                <div style={{fontSize:7,color:"#3f3f46",marginTop:4,fontStyle:"italic"}}>💡 {tip}</div>
               </div>
-              {sessions.killzone_active && (
-                <div className="mt-2 text-[9px] bg-amber-500/10 border border-amber-500/20 rounded p-2 text-amber-400">
-                  ⚡ Killzone Active — zvýšená pravděpodobnost setupů
+            ))}
+          </div>
+        </>}
+ 
+        {/* ── TREND ── */}
+        {tab==="Trend"&&<>
+          <div className="card card-glow">
+            <div className="sec-head">Multi-Timeframe Trend</div>
+            {[["M5  Micro",trend.micro,"Scalp směr · tvůj M5"],["H1  Intraday",trend.intraday,"Primary filter · hlavní bias dne"],["D1  Daily",trend.daily,"Swing struktura · denní context"],["W1  Weekly",trend.weekly,"Makro směr · S/R zóny"],["MN  Monthly",trend.monthly,"Long-term bias · inst. tok"]].map(([label,val,sub])=>(
+              <div key={label} className="kv">
+                <div><div style={{fontSize:10,color:"#e4e4e7",fontWeight:"bold"}}>{label}</div><div style={{fontSize:8,color:"#3f3f46",marginTop:2}}>{sub}</div></div>
+                <span className={`trend-pill ${tc(val??"NEUTRAL")}`}>{ti(val??"NEUTRAL")} {val??"NEUTRAL"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="sec-head">EMA Stack · 30D Chart</div>
+            <Chart data={ph} ema8={tech.ema8} ema21={tech.ema21} spot={spot}/>
+            {[["EMA 8",tech.ema8,"#22c55e","Rychlá · momentum signal"],["EMA 21",tech.ema21,"#3b82f6","Střední · intraday trend"],["EMA 50",tech.ema50,"#c084fc","Pomalá · swingový S/R"],["EMA 200",tech.ema200,"#ef4444","Klíčová · long-term trend line"]].map(([label,val,c,desc])=>{
+              const diff=spot-(val??spot);
+              return(
+                <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",borderBottom:"1px solid #18181b"}}>
+                  <span style={{fontSize:9,color:c,fontWeight:"bold",width:48,flexShrink:0}}>{label}</span>
+                  <span style={{fontSize:8,color:"#3f3f46",flex:1}}>{desc}</span>
+                  <span style={{fontSize:9,fontWeight:"bold",color:"#e4e4e7"}}>${f(val,1)}</span>
+                  <span style={{fontSize:9,fontWeight:"bold",color:diff>0?"#4ade80":"#f87171",width:44,textAlign:"right"}}>{sg(diff)}{f(diff,1)}</span>
                 </div>
-              )}
-            </Card>
-
-            <Card>
-              <Sec sub="30 daily svíček · EMA8 (zelená) · EMA21 (modrá)">── Price Chart</Sec>
-              <MiniPriceChart data={priceHistory} ema8={tech.ema8} ema21={tech.ema21} spot={spot} />
-              <div className="flex gap-3 mt-1 text-[8px]">
-                <span className="text-emerald-400">── EMA8: {fmt(tech.ema8, 1)}</span>
-                <span className="text-sky-400">── EMA21: {fmt(tech.ema21, 1)}</span>
-                <span className="text-zinc-500">── EMA50: {fmt(tech.ema50, 1)}</span>
+              );
+            })}
+          </div>
+        </>}
+ 
+        {/* ── COT ── */}
+        {tab==="COT"&&<>
+          <div className="card">
+            <div className="sec-head">Commitment of Traders · Gold COMEX</div>
+            <div className="sec-sub">CFTC · {cot.source==="fallback"?"⚠ záložní data":"live"} · {cot.date??"—"}</div>
+            {cot.source==="fallback"&&<div className="alert alert-y" style={{marginBottom:10}}>⚠ CFTC server nedostupný</div>}
+            <COTBar label="Commercials" long={cot.commercials_long} short={cot.commercials_short} sub="(Producenti / hedgers)"/>
+            <COTBar label="Large Specs" long={cot.noncomm_long}    short={cot.noncomm_short}    sub="(Hedge fondy / trend followers)"/>
+            <div className="g3" style={{marginTop:8}}>
+              {[["COT Signal",cotBull?"BULLISH":"BEARISH",cotBull?"#4ade80":"#f87171"],["Large Specs net",fM((cot.noncomm_long??0)-(cot.noncomm_short??0)),(cot.noncomm_long??0)>(cot.noncomm_short??0)?"#4ade80":"#f87171"],["Comm. net",fM((cot.commercials_long??0)-(cot.commercials_short??0)),(cot.commercials_long??0)>(cot.commercials_short??0)?"#4ade80":"#f87171"]].map(([k,v,c])=>(
+                <div key={k} className="stat-box"><div className="stat-label">{k}</div><div className="stat-val" style={{color:c,fontSize:13}}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+          <div className="card">
+            <div className="sec-head">Jak číst COT report</div>
+            {[
+              ["Commercials (Producenti)","#f5a623",
+               "Těžaři, šperkáři, zlaté banky — hedgují reálnou fyzickou produkci. Jsou VŽDY přirozenými prodejci (záporný net). Čím více shortují, tím více fyzického goldu reálně vzniká. Extrémní short commercials = historicky bullish signal.",
+               "Sleduj: Je net rekordně záporný? → silný bullish makro signal. Nejde o timing, ale o bias."],
+              ["Large Specifiers (Hedge fondy)","#60a5fa",
+               "Profesionální spekulanti bez fyzické vazby. Čistí trend-followers — nakupují jak cena stoupá, prodávají jak klesá. Když jsou extrémně long, crowded trade → riziko reverze.",
+               "Sleduj: Extrém long → kontra-signal (přesycení). Čerstvý nárůst long pozic → potvrzení trendu."],
+              ["Jak to používat v tradingu","#4ade80",
+               "COT jsou WEEKLY data zveřejňovaná každý pátek s 3denním zpožděním. Není to intraday nástroj — je to makro bias filter pro střednodobý výhled (dny až týdny).",
+               "Kombinuj: COT bullish bias + intraday technická support zone = silnější setup confluence."],
+            ].map(([t,c,desc,tip])=>(
+              <div key={t} className="info-block" style={{borderLeftColor:c}}>
+                <div style={{fontSize:9,fontWeight:"bold",color:c,marginBottom:3}}>{t}</div>
+                <div style={{fontSize:8,color:"#71717a",lineHeight:1.5}}>{desc}</div>
+                <div style={{fontSize:7,color:"#3f3f46",marginTop:4,fontStyle:"italic"}}>💡 {tip}</div>
               </div>
-            </Card>
-
-            <Card>
-              <Sec>── Key Price Levels</Sec>
-              <div className="space-y-0.5">
-                {keyLevels.map((lvl, i) => {
-                  const diff = lvl.price - spot;
-                  const isSpot = lvl.type === "SPOT";
-                  return (
-                    <div key={i} className={`flex items-center gap-2 py-1 rounded px-1 ${isSpot ? "bg-amber-500/10 border border-amber-500/20" : ""}`}>
-                      <span className={`text-[9px] font-mono w-4 font-bold ${
-                        lvl.type === "R" ? "text-red-400" : lvl.type === "S" ? "text-emerald-400" :
-                        lvl.type === "SPOT" ? "text-amber-400" : "text-sky-400"}`}>{lvl.type}</span>
-                      <span className={`text-[10px] font-mono font-bold flex-1 ${isSpot ? "text-amber-400" : "text-zinc-300"}`}>
-                        ${fmt(lvl.price, 1)}
-                      </span>
-                      <span className="text-[9px] text-zinc-500">{lvl.label}</span>
-                      {!isSpot && (
-                        <span className={`text-[9px] font-mono ${diff > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                          {sign(diff)}{fmt(diff, 1)}
-                        </span>
-                      )}
+            ))}
+          </div>
+        </>}
+ 
+        {/* ── MACRO ── */}
+        {tab==="Macro"&&<>
+          <div className="card">
+            <div className="sec-head">Macro Drivers · Live</div>
+            {MACRO_CFG.map(item=>{
+              const val=macro[item.key];if(!val)return null;
+              const bull=item.inv?val.change<0:val.change>0;
+              return(
+                <div key={item.key} className="macro-row">
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,color:"#e4e4e7",fontWeight:"bold"}}>{item.label}</div>
+                    <div style={{fontSize:8,color:"#52525b",marginTop:3,lineHeight:1.5}}>{item.desc}</div>
+                    <div style={{fontSize:7,marginTop:5,padding:"2px 6px",borderRadius:2,display:"inline-block",background:bull?"rgba(34,197,94,.08)":"rgba(239,68,68,.08)",color:bull?"#4ade80":"#f87171",border:`1px solid ${bull?"rgba(34,197,94,.2)":"rgba(239,68,68,.2)"}`}}>
+                      {bull?"▲ "+item.bull:"▼ "+item.bear}
                     </div>
-                  );
-                })}
-              </div>
-            </Card>
-          </>
-        )}
-
-        {/* ══ GEX ══ */}
-        {tab === "GEX" && (
-          <>
-            <Card glow={gexPos}>
-              <Sec sub="GLD Options proxy · 4 nejbližší expirace">── Gamma Exposure</Sec>
-              {gex.regime === "UNKNOWN" ? (
-                <div className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded p-3">
-                  ⚠ Options data momentálně nedostupná (yfinance omezení).
-                  GEX levely se načtou při příštím refreshi.
-                  <div className="text-zinc-500 mt-1">Fallback levely: Call Wall ${fmt(gex.call_wall)} · Put Wall ${fmt(gex.put_wall)}</div>
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    {[
-                      { label: "Call Wall",  value: fmt(gex.call_wall),  color: "text-emerald-400" },
-                      { label: "Put Wall",   value: fmt(gex.put_wall),   color: "text-red-400" },
-                      { label: "Gamma Flip", value: fmt(gex.gamma_flip), color: "text-amber-400" },
-                      { label: "HVL",        value: fmt(gex.hvl),        color: "text-sky-400" },
-                      { label: "Max Pain",   value: fmt(gex.max_pain),   color: "text-purple-400" },
-                      { label: "Net GEX",    value: fmtM(gex.net_gex),  color: gexPos ? "text-emerald-400" : "text-red-400" },
-                    ].map(item => (
-                      <div key={item.label} className="bg-zinc-800/50 rounded-lg p-2">
-                        <div className="text-[8px] text-zinc-500 mb-0.5">{item.label}</div>
-                        <div className={`text-sm font-bold font-mono ${item.color}`}>{item.value}</div>
-                      </div>
-                    ))}
                   </div>
-                  <div className="space-y-0.5">
-                    {(gex.top10 ?? []).sort((a, b) => b.strike - a.strike).map((item, i) => (
-                      <GEXBar key={i} {...item} maxAbs={maxGex} spot={spot} />
-                    ))}
-                  </div>
-                </>
-              )}
-              <div className="mt-3 pt-3 border-t border-zinc-800 text-[9px] text-zinc-500">
-                Expected Move: <span className="text-zinc-300">${fmt(gex.expected_move_low)} – ${fmt(gex.expected_move_high)}</span>
-              </div>
-              <div className={`mt-2 text-[9px] rounded p-2 border ${gexPos
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
-                {gexPos
-                  ? "► POSITIVE GAMMA: MM buy dips & sell rallies → mean reversion favored"
-                  : "► Gamma regime nejistý — sleduj cenu vs. Gamma Flip level"}
-              </div>
-            </Card>
-
-            <Card>
-              <Sec>── Jak použít GEX levely</Sec>
-              <div className="space-y-2 text-[9px] text-zinc-400">
-                {[
-                  ["Call Wall " + fmt(gex.call_wall), "Silná resistance. MM prodávají jak cena stoupá → odraz nebo zpomalení.", "text-emerald-400"],
-                  ["Put Wall " + fmt(gex.put_wall), "Silný support. MM nakupují jak cena klesá → podlaha.", "text-red-400"],
-                  ["Gamma Flip " + fmt(gex.gamma_flip), "Klíčový level. Nad ním = mean reversion. Pod ním = trendy pohyby.", "text-amber-400"],
-                ].map(([title, desc, c]) => (
-                  <div key={title} className="border-l-2 border-zinc-700 pl-2">
-                    <div className={`font-bold font-mono mb-0.5 ${c}`}>{title}</div>
-                    <div className="text-zinc-500">{desc}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </>
-        )}
-
-        {/* ══ TREND ══ */}
-        {tab === "Trend" && (
-          <>
-            <Card glow>
-              <Sec>── Multi-Timeframe Trend</Sec>
-              <div className="space-y-1.5">
-                {[
-                  ["M5 Micro",    trend.micro,    "Scalp směr · tvůj M5"],
-                  ["H1 Intraday", trend.intraday, "Intraday bias · primary filter"],
-                  ["D1 Daily",    trend.daily,    "Swing struktura"],
-                  ["W1 Weekly",   trend.weekly,   "Makro směr"],
-                  ["MN Monthly",  trend.monthly,  "Long-term bias"],
-                ].map(([label, val, sub]) => (
-                  <div key={label} className="flex items-center justify-between py-1.5 border-b border-zinc-800/50 last:border-0">
-                    <div>
-                      <div className="text-[10px] font-mono text-zinc-300">{label}</div>
-                      <div className="text-[8px] text-zinc-600">{sub}</div>
-                    </div>
-                    <TrendArrow dir={val ?? "NEUTRAL"} />
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <Sec>── RSI Multi-TF</Sec>
-              <div className="flex justify-around py-2">
-                <RSIGauge value={tech.rsi_h1} label="H1" />
-                <RSIGauge value={tech.rsi_h4} label="H4" />
-                <RSIGauge value={tech.rsi_d}  label="D1" />
-              </div>
-            </Card>
-
-            <Card>
-              <Sec sub="30 daily svíček">── Price Chart</Sec>
-              <MiniPriceChart data={priceHistory} ema8={tech.ema8} ema21={tech.ema21} spot={spot} />
-              <div className="space-y-1 mt-2">
-                {[
-                  ["EMA 8",   tech.ema8,   "text-emerald-400"],
-                  ["EMA 21",  tech.ema21,  "text-sky-400"],
-                  ["EMA 50",  tech.ema50,  "text-purple-400"],
-                  ["EMA 200", tech.ema200, "text-red-400"],
-                ].map(([label, val, c]) => {
-                  const diff = spot - (val ?? spot);
-                  return (
-                    <div key={label} className="flex justify-between items-center text-[9px]">
-                      <span className={`font-mono font-bold ${c}`}>{label}</span>
-                      <span className="text-zinc-400 font-mono">{fmt(val, 1)}</span>
-                      <span className={`font-mono ${diff > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {sign(diff)}{fmt(diff, 1)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          </>
-        )}
-
-        {/* ══ COT ══ */}
-        {tab === "COT" && (
-          <>
-            <Card>
-              <Sec sub={`CFTC · ${cot.source === "fallback" ? "⚠ záložní data" : "live"} · ${cot.date ?? "—"}`}>
-                ── Commitment of Traders
-              </Sec>
-              {cot.source === "fallback" && (
-                <div className="mb-3 text-[9px] bg-amber-500/10 border border-amber-500/20 rounded p-2 text-amber-400">
-                  ⚠ CFTC server nedostupný — zobrazena poslední známá data
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {[
-                  { label: "Commercials",  long: cot.commercials_long,  short: cot.commercials_short,  sub: "Smart Money" },
-                  { label: "Large Specs",  long: cot.noncomm_long,      short: cot.noncomm_short,      sub: "Spekulanti" },
-                ].map(item => {
-                  const net = (item.long ?? 0) - (item.short ?? 0);
-                  return (
-                    <div key={item.label} className="bg-zinc-800/50 rounded-lg p-2">
-                      <div className="text-[8px] text-zinc-500 mb-0.5">{item.label}</div>
-                      <div className={`text-sm font-bold font-mono ${net > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtM(net)}
-                      </div>
-                      <div className="text-[8px] text-zinc-600">{item.sub}</div>
-                    </div>
-                  );
-                })}
-                <div className="bg-zinc-800/50 rounded-lg p-2">
-                  <div className="text-[8px] text-zinc-500 mb-0.5">Sentiment</div>
-                  <div className={`text-sm font-bold font-mono ${cotBull ? "text-emerald-400" : "text-red-400"}`}>
-                    {cotBull ? "BULLISH" : "BEARISH"}
+                  <div style={{textAlign:"right",marginLeft:14,flexShrink:0}}>
+                    <div style={{fontSize:12,fontWeight:"bold",color:"#e4e4e7"}}>{item.unit}{f(val.value,item.unit==="%"?2:val.value>1000?0:2)}</div>
+                    <div style={{fontSize:9,marginTop:3,color:bull?"#4ade80":"#f87171"}}>{val.change>=0?"▲":"▼"} {Math.abs(val.change).toFixed(2)}</div>
                   </div>
                 </div>
-              </div>
-              <div className="space-y-2 text-[9px] text-zinc-400 border-t border-zinc-800 pt-3">
-                {[
-                  ["Commercials záporný", "Těžaři hedgují produkci — čím více shortují, tím vyšší reálná cena. Bullish pro gold."],
-                  ["Large Specs kladný",  "Hedge fondy long — sleduj extremy, při přesycení hrozí reverz."],
-                ].map(([title, desc]) => (
-                  <div key={title} className="border-l-2 border-zinc-700 pl-2">
-                    <div className="font-bold text-zinc-300 mb-0.5">{title}</div>
-                    <div className="text-zinc-500">{desc}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </>
-        )}
-
-        {/* ══ MACRO ══ */}
-        {tab === "Macro" && (
-          <>
-            <Card>
-              <Sec>── Macro Drivers</Sec>
-              {[
-                { label: "Real Yield 10Y", val: macro.real_yield, unit: "%", inv: true,  sub: "Neg. korelace −0.82" },
-                { label: "DXY",            val: macro.dxy,        unit: "",  inv: true,  sub: "Neg. korelace −0.78" },
-                { label: "VIX",            val: macro.vix,        unit: "",  inv: false, sub: "Safe-haven demand" },
-                { label: "SPX",            val: macro.spx,        unit: "",  inv: false, sub: "Risk sentiment" },
-                { label: "Oil (WTI)",      val: macro.oil,        unit: "$", inv: false, sub: "Inflation proxy" },
-                { label: "BTC",            val: macro.btc,        unit: "$", inv: false, sub: "Risk-on proxy" },
-              ].map(item => {
-                if (!item.val) return null;
-                const bull = item.inv ? item.val.change < 0 : item.val.change > 0;
-                return (
-                  <div key={item.label} className="flex items-center justify-between py-1.5 border-b border-zinc-800/50 last:border-0">
-                    <div>
-                      <div className="text-[10px] text-zinc-300">{item.label}</div>
-                      <div className="text-[8px] text-zinc-600">{item.sub}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono font-bold text-zinc-200">
-                        {item.unit}{fmt(item.val.value, item.unit === "%" ? 2 : item.unit === "$" && item.val.value > 1000 ? 0 : 2)}
-                      </span>
-                      <span className={`text-[9px] font-mono ${bull ? "text-emerald-400" : "text-red-400"}`}>
-                        {item.val.change >= 0 ? "▲" : "▼"} {Math.abs(item.val.change).toFixed(2)}
-                      </span>
-                    </div>
+              );
+            })}
+          </div>
+          <div className="card">
+            <div className="sec-head">Seasonal · 20Y průměr</div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:3,height:60,marginBottom:8}}>
+              {seasonal.map((m,i)=>{
+                const mxA=Math.max(...seasonal.map(x=>Math.abs(x.avg)));
+                const h=(Math.abs(m.avg)/mxA)*100,curr=i+1===curM;
+                return(
+                  <div key={m.month} style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,gap:2}}>
+                    <div style={{width:"100%",borderRadius:2,background:m.avg>=0?"rgba(34,197,94,.45)":"rgba(239,68,68,.45)",height:`${Math.max(h,5)}%`,outline:curr?"1px solid #f5a623":"none"}}/>
+                    <span style={{fontSize:7,color:curr?"#f5a623":"#27272a",fontWeight:curr?"bold":"normal"}}>{m.month}</span>
                   </div>
                 );
               })}
-            </Card>
-
-            <Card>
-              <Sec>── Seasonal (20Y průměr)</Sec>
-              <div className="flex items-end gap-1 h-16 mb-2">
-                {seasonal.map((m, i) => {
-                  const maxAvg = Math.max(...seasonal.map(x => Math.abs(x.avg)));
-                  const h = (Math.abs(m.avg) / maxAvg) * 100;
-                  const isCurr = i + 1 === currentMonth;
-                  return (
-                    <div key={m.month} className="flex flex-col items-center flex-1 gap-0.5">
-                      <div className={`w-full rounded-sm ${m.avg >= 0 ? "bg-emerald-500/60" : "bg-red-500/60"} ${isCurr ? "ring-1 ring-amber-400" : ""}`}
-                        style={{ height: `${Math.max(h, 8)}%` }} />
-                      <span className={`text-[7px] font-mono ${isCurr ? "text-amber-400 font-bold" : "text-zinc-600"}`}>{m.month}</span>
-                    </div>
-                  );
-                })}
+            </div>
+            <div className="kv"><span className="kv-label">Aktuální měsíc avg</span><span className="kv-val" style={{color:(cS.avg??0)>=0?"#4ade80":"#f87171"}}>{sg(cS.avg??0)}{cS.avg??0}%</span></div>
+            <div className="kv"><span className="kv-label">% pozitivních let</span><span className="kv-val">{cS.positive??"—"}%</span></div>
+          </div>
+        </>}
+ 
+        {/* ── RISK ── */}
+        {tab==="Risk"&&<>
+          <div className="card card-glow">
+            <div className="sec-head">Risk Kalkulátor · ATR(14) = ${f(risk.atr_daily,1)}</div>
+            <div className="g2" style={{marginBottom:10}}>
+              {[["Doporučený SL",`$${f(risk.suggested_sl,1)}`,"0.5× ATR","#f87171"],["TP1 (1:1)",`$${f(risk.suggested_tp1,1)}`,"1× ATR","#4ade80"],["TP2 (1:2)",`$${f(risk.suggested_tp2,1)}`,"2× ATR","#4ade80"],["RR Ratio",`1:${f(risk.rr,1)}`,"minimum 1:2","#f5a623"]].map(([k,v,s,c])=>(
+                <div key={k} className="stat-box"><div className="stat-label">{k}</div><div className="stat-val" style={{color:c,fontSize:18}}>{v}</div><div className="stat-sub">{s}</div></div>
+              ))}
+            </div>
+            <div className="kv"><span className="kv-label">Lot size pro $150 max risk</span><span className="kv-val" style={{color:"#f5a623"}}>{risk.lot_for_150} lot</span></div>
+          </div>
+          <div className="card">
+            <div className="sec-head">Equity Edge Pravidla</div>
+            {[["Daily Loss Limit","3% / $150","#f87171"],["Max Trailing DD","5% / $250","#f87171"],["Profit Target","8% / $400","#4ade80"],["Anti-Scalping","Avg. trade > 2 min","#f5a623"],["News Rule","±2 min High Impact","#f5a623"]].map(([k,v,c])=>(
+              <div key={k} className="kv"><span className="kv-label">{k}</span><span className="kv-val" style={{color:c}}>{v}</span></div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="sec-head">Pre-Trade Checklist</div>
+            {["Jsem v killzone (London 07–10 / NY 13–16 UTC)?","H1 a D1 trend ve směru tradu?","Cena u strukturálního levelu (HVN/POC/EMA)?","SL za strukturou (swing high/low)?","Žádný High Impact news v ±2 min?","Denní loss limit pod 50%?","Nejde o revenge trade nebo FOMO?"].map((item,i)=>(
+              <div key={i} className="check-item">
+                <div style={{width:12,height:12,border:"1px solid #3f3f46",borderRadius:2,flexShrink:0}}/>
+                <span style={{fontSize:9,color:"#71717a"}}>{item}</span>
               </div>
-              <KV label="Aktuální měsíc" value={`${sign(currSeas.avg ?? 0)}${currSeas.avg ?? 0}%`}
-                valueClass={(currSeas.avg ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"} />
-              <KV label="% pozitivních let" value={`${currSeas.positive ?? "—"}%`} />
-            </Card>
-          </>
-        )}
-
-        {/* ══ RISK ══ */}
-        {tab === "Risk" && (
-          <>
-            <Card glow>
-              <Sec sub={`ATR(14) = $${fmt(risk.atr_daily, 1)}`}>── Risk Kalkulátor</Sec>
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                {[
-                  { label: "Doporučený SL", value: `$${fmt(risk.suggested_sl, 1)}`, sub: "0.5× ATR", color: "text-red-400" },
-                  { label: "TP1 (1:1)",     value: `$${fmt(risk.suggested_tp1, 1)}`, sub: "1× ATR",   color: "text-emerald-400" },
-                  { label: "TP2 (1:2)",     value: `$${fmt(risk.suggested_tp2, 1)}`, sub: "2× ATR",   color: "text-emerald-400" },
-                  { label: "RR Ratio",      value: `1:${fmt(risk.rr, 1)}`,           sub: "min 1:2",   color: "text-amber-400" },
-                ].map(item => (
-                  <div key={item.label} className="bg-zinc-800/50 rounded-lg p-2">
-                    <div className="text-[8px] text-zinc-500 mb-0.5">{item.label}</div>
-                    <div className={`text-lg font-bold font-mono ${item.color}`}>{item.value}</div>
-                    <div className="text-[8px] text-zinc-600">{item.sub}</div>
-                  </div>
-                ))}
-              </div>
-              <KV label="Lot size ($150 SL)" value={`${risk.lot_for_150} lot`} valueClass="text-amber-400" />
-            </Card>
-
-            <Card>
-              <Sec>── Equity Edge Pravidla</Sec>
-              {[
-                ["Daily Loss Limit", "3% ($150)",          "text-red-400"],
-                ["Max Trailing DD",  "5% ($250)",          "text-red-400"],
-                ["Profit Target",    "8% ($400)",          "text-emerald-400"],
-                ["Anti-Scalping",    "Avg. trade > 2 min", "text-amber-400"],
-                ["News Rule",        "±2 min High Impact", "text-amber-400"],
-              ].map(([k, v, c]) => <KV key={k} label={k} value={v} valueClass={c} />)}
-            </Card>
-
-            <Card>
-              <Sec>── Pre-Trade Checklist</Sec>
-              <div className="space-y-1 text-[9px]">
-                {[
-                  "Jsem v killzone (London 07-10 / NY 13-16 UTC)?",
-                  "Trend H1 a D1 ve směru tradu?",
-                  "Z-score signál potvrzen?",
-                  "SL za strukturou?",
-                  "Žádný High Impact news v ±2 min?",
-                  "Denní loss limit pod 50%?",
-                  "Nejde o revenge trade?",
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-2 py-1 border-b border-zinc-800/40 last:border-0">
-                    <div className="w-3 h-3 rounded border border-zinc-600 flex-shrink-0" />
-                    <span className="text-zinc-400">{item}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </>
-        )}
+            ))}
+          </div>
+        </>}
+ 
       </div>
-
-      <div className="px-4 py-3 border-t border-zinc-800/50 text-[8px] text-zinc-700 font-mono flex justify-between">
-        <span>LIVE · yfinance + CFTC + FRED · refresh 15s</span>
-        <span>Gold Terminal v3.0 · {new Date().toLocaleDateString("cs-CZ")}</span>
+ 
+      <div className="footer">
+        <span>LIVE · yfinance + CFTC + FRED · auto-refresh 15s</span>
+        <span>Gold Terminal v3.1 · {new Date().toLocaleDateString("cs-CZ")}</span>
       </div>
     </div>
   );
 }
+ 
+ReactDOM.createRoot(document.getElementById("root")).render(<GoldTerminal/>);
+</script>
+</body>
+</html>
+ 
