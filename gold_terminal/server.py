@@ -78,6 +78,28 @@ def determine_trend(price: float, ema8: float, ema21: float, ema50: float) -> st
         return "BEARISH"
     return "NEUTRAL"
 
+def calc_max_pain(rows: list) -> float:
+    """
+    Max pain = strike, při kterém by držitelé opcí (calls i puts) dohromady
+    obdrželi nejmenší celkovou vnitřní hodnotu při expiraci - tedy strike,
+    který "bolí" nejvíc kupujícím opcí.
+    """
+    if not rows:
+        return 0
+    strikes = [r["strike"] for r in rows]
+    best_strike = strikes[0]
+    min_payout = None
+    for candidate in strikes:
+        payout = 0.0
+        for r in rows:
+            k = r["strike"]
+            payout += r["call_oi"] * max(0, candidate - k)
+            payout += r["put_oi"]  * max(0, k - candidate)
+        if min_payout is None or payout < min_payout:
+            min_payout = payout
+            best_strike = candidate
+    return best_strike
+
 def calc_gex(chain_calls: pd.DataFrame, chain_puts: pd.DataFrame, spot: float) -> dict:
     """
     GEX = Gamma × OI × 100 × Spot² × 0.01
@@ -90,16 +112,18 @@ def calc_gex(chain_calls: pd.DataFrame, chain_puts: pd.DataFrame, spot: float) -
         g = row.get("gamma", 0) or 0
         oi = row.get("openInterest", 0) or 0
         gex_val = g * oi * 100 * spot**2 * 0.01
-        results.setdefault(s, {"strike": s, "call_gex": 0, "put_gex": 0})
+        results.setdefault(s, {"strike": s, "call_gex": 0, "put_gex": 0, "call_oi": 0, "put_oi": 0})
         results[s]["call_gex"] += gex_val
+        results[s]["call_oi"] += oi
 
     for _, row in chain_puts.iterrows():
         s = row.get("strike", 0)
         g = row.get("gamma", 0) or 0
         oi = row.get("openInterest", 0) or 0
         gex_val = g * oi * 100 * spot**2 * 0.01
-        results.setdefault(s, {"strike": s, "call_gex": 0, "put_gex": 0})
+        results.setdefault(s, {"strike": s, "call_gex": 0, "put_gex": 0, "call_oi": 0, "put_oi": 0})
         results[s]["put_gex"] += gex_val
+        results[s]["put_oi"] += oi
 
     if not results:
         return _fallback_gex(spot)
@@ -132,7 +156,7 @@ def calc_gex(chain_calls: pd.DataFrame, chain_puts: pd.DataFrame, spot: float) -
         "put_wall":    put_wall,
         "gamma_flip":  gamma_flip,
         "hvl":         round((call_wall + put_wall) / 2),
-        "max_pain":    call_wall,  # zjednodušení
+        "max_pain":    calc_max_pain(rows),
         "expected_move_high": round(spot + 2 * (call_wall - spot) * 0.5) if call_wall > spot else round(spot + 50),
         "expected_move_low":  round(spot - 2 * (spot - put_wall) * 0.5) if put_wall < spot else round(spot - 50),
         "top10":       top10,
